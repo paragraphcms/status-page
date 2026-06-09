@@ -1,0 +1,10 @@
+# deps
+node_modules/
+
+# local runtime
+.wrangler/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+.env
