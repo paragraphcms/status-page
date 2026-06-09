@@ -49,14 +49,67 @@ Endpoint can set `"private": true` to run checks in the background without showi
 Other env vars:
 
 - `LOGO_URL` - logo shown in the top-left header.
+- `FAVICON_URL` - favicon URL rendered as `<link rel="icon">`.
 - `RETENTION_DAYS` - how many days to keep in storage, default `90`.
 - `MOCK_PREVIOUS_DAYS` - optional success percentage for bootstrapping missing monitor history over the previous `RETENTION_DAYS` days, for example `99,9832423`.
 - `DISPLAY_DAYS` - how many days to display on the status page and in `/api/status`, default `60`.
 - `PAGE_TITLE` - page title and header label, default `Status Page`.
 - `FOOTER_TITLE` - footer label, default `Paragraph CMS Open Status Page`.
+- `META` - JSON array of `{ "name": string, "value": string }` entries. `og:*` entries render as `<meta property="...">`; all other entries render as `<meta name="...">`.
 - `CLEANUP_CRON` - cron expression used to identify the cleanup run, default `0 3 * * *`.
 - `SLACK_WEBHOOK_URL` - incoming Slack webhook used by `GET /api/slack-status` when failures are detected.
 - `SLACK_STATUS_CHECK_COUNT` - how many latest stored checks per configured monitor are inspected by `GET /api/slack-status`, default `3`.
+
+`META` example:
+
+```json
+[
+  {
+    "name": "description",
+    "value": "Live uptime, availability, and incident status for Paragraph CMS services."
+  },
+  {
+    "name": "og:description",
+    "value": "Live uptime, availability, and incident status for Paragraph CMS services."
+  },
+  {
+    "name": "og:image",
+    "value": "https://paragraphcms.com/paragraph-cms-logo.svg"
+  },
+  {
+    "name": "og:title",
+    "value": "Paragraph CMS Status Page"
+  },
+  {
+    "name": "og:type",
+    "value": "website"
+  },
+  {
+    "name": "og:site_name",
+    "value": "Paragraph CMS Status"
+  },
+  {
+    "name": "twitter:card",
+    "value": "summary_large_image"
+  },
+  {
+    "name": "twitter:title",
+    "value": "Paragraph CMS Status Page"
+  },
+  {
+    "name": "twitter:description",
+    "value": "Live uptime, availability, and incident status for Paragraph CMS services."
+  },
+  {
+    "name": "og:url",
+    "value": "https://status.paragraphcms.com/"
+  },
+  {
+    "name": "twitter:image",
+    "value": "https://paragraphcms.com/paragraph-cms-logo.svg"
+  }
+]
+```
 
 ## Cloudflare
 
@@ -98,6 +151,9 @@ Example local run with env vars:
 ```sh
 PORT=3000 \
 DATABASE_PATH=/tmp/status-page.sqlite \
+PAGE_TITLE='Paragraph CMS Status Page' \
+LOGO_URL='https://paragraphcms.com/paragraph-cms-logo.svg' \
+FAVICON_URL='https://paragraphcms.com/favicon.ico' \
 RETENTION_DAYS=90 \
 MOCK_PREVIOUS_DAYS=99,9832423 \
 DISPLAY_DAYS=60 \

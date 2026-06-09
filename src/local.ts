@@ -27,6 +27,8 @@ const app = createApp({
 const env: AppEnv = {
   STATUS_ENDPOINTS_JSON: process.env.STATUS_ENDPOINTS_JSON,
   LOGO_URL: process.env.LOGO_URL,
+  FAVICON_URL: process.env.FAVICON_URL,
+  META: process.env.META,
   RETENTION_DAYS: process.env.RETENTION_DAYS,
   MOCK_PREVIOUS_DAYS: process.env.MOCK_PREVIOUS_DAYS,
   DISPLAY_DAYS: process.env.DISPLAY_DAYS,

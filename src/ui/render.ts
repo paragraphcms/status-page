@@ -4,6 +4,13 @@ export type StatusPageOptions = {
   title: string;
   footerTitle: string;
   logoUrl?: string;
+  faviconUrl?: string;
+  meta: StatusPageMeta[];
+};
+
+export type StatusPageMeta = {
+  name: string;
+  value: string;
 };
 
 export function renderStatusPage(
@@ -26,6 +33,8 @@ export function renderStatusPage(
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(options.title)}</title>
+    ${renderFavicon(options)}
+    ${renderMeta(options.meta)}
     <style>
       :root {
         color-scheme: light;
@@ -63,7 +72,7 @@ export function renderStatusPage(
         display: flex;
         align-items: center;
         justify-content: space-between;
-        min-height: 32px;
+        min-height: 20px;
       }
 
       .brand {
@@ -482,10 +491,28 @@ export function renderStatusPage(
 
 function renderLogo(options: StatusPageOptions): string {
   if (options.logoUrl) {
-    return `<img src="${escapeAttribute(options.logoUrl)}" alt="${escapeAttribute(options.title)} logo">`;
+    return `<img src="${escapeAttribute(options.logoUrl)}" alt="${escapeAttribute(options.title)} logo" style="max-height: 20px; width: auto;">`;
   }
 
   return '<span class="brand-mark" aria-hidden="true">SP</span>';
+}
+
+function renderFavicon(options: StatusPageOptions): string {
+  if (!options.faviconUrl) {
+    return "";
+  }
+
+  return `<link rel="icon" href="${escapeAttribute(options.faviconUrl)}">`;
+}
+
+function renderMeta(meta: StatusPageMeta[]): string {
+  return meta.map(renderMetaTag).join("\n    ");
+}
+
+function renderMetaTag(entry: StatusPageMeta): string {
+  const attributeName = entry.name.startsWith("og:") ? "property" : "name";
+
+  return `<meta ${attributeName}="${escapeAttribute(entry.name)}" content="${escapeAttribute(entry.value)}">`;
 }
 
 function renderConfigErrors(errors: string[]): string {

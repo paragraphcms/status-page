@@ -4,6 +4,8 @@ export type AppEnv = {
   DB?: D1Database
   STATUS_ENDPOINTS_JSON?: string | unknown[]
   LOGO_URL?: string
+  FAVICON_URL?: string
+  META?: string | unknown[]
   RETENTION_DAYS?: string | number
   MOCK_PREVIOUS_DAYS?: string | number
   DISPLAY_DAYS?: string | number
@@ -12,6 +14,11 @@ export type AppEnv = {
   CLEANUP_CRON?: string
   SLACK_WEBHOOK_URL?: string
   SLACK_STATUS_CHECK_COUNT?: string | number
+}
+
+export type MetaEntry = {
+  name: string
+  value: string
 }
 
 export type AppRuntime = {
@@ -67,10 +74,62 @@ export function getLogoUrl(env: AppEnv): string | undefined {
   return nonEmptyString(env.LOGO_URL)
 }
 
+export function getFaviconUrl(env: AppEnv): string | undefined {
+  return nonEmptyString(env.FAVICON_URL)
+}
+
+export function getMeta(env: AppEnv): MetaEntry[] {
+  const parsed = parseJsonArray(env.META)
+
+  return parsed.flatMap((entry) => {
+    if (!isPlainObject(entry)) {
+      return []
+    }
+
+    const name = nonEmptyString(entry.name)
+
+    if (!name || typeof entry.value !== 'string') {
+      return []
+    }
+
+    return [
+      {
+        name,
+        value: entry.value.trim(),
+      },
+    ]
+  })
+}
+
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0
     ? value.trim()
     : undefined
+}
+
+function parseJsonArray(raw: unknown): unknown[] {
+  if (raw === undefined || raw === null || raw === '') {
+    return []
+  }
+
+  if (Array.isArray(raw)) {
+    return raw
+  }
+
+  if (typeof raw !== 'string') {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function readPositiveInteger(raw: unknown, fallback: number, max: number): number {

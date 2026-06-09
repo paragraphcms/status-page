@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 
 import type { AppEnv, AppRuntime } from './env'
-import { getFooterTitle, getLogoUrl, getPageTitle } from './env'
+import { getFaviconUrl, getFooterTitle, getLogoUrl, getMeta, getPageTitle } from './env'
 import {
   cleanupOldResults,
   getSlackStatusSummary,
@@ -23,6 +23,8 @@ export function createApp(runtime: AppRuntime): Hono<{ Bindings: AppEnv }> {
         title: getPageTitle(env),
         footerTitle: getFooterTitle(env),
         logoUrl: getLogoUrl(env),
+        faviconUrl: getFaviconUrl(env),
+        meta: getMeta(env),
       }),
     )
   })
