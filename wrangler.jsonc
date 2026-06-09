@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "status-page",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "triggers": {
+    "crons": ["*/5 * * * *", "0 3 * * *"],
+  },
+  "vars": {
+    "PAGE_TITLE": "Paragraph CMS",
+    "FOOTER_TITLE": "Paragraph CMS Open Status Page",
+    "LOGO_URL": "",
+    "RETENTION_DAYS": "90",
+    "MOCK_PREVIOUS_DAYS": "",
+    "DISPLAY_DAYS": "90",
+    "SLACK_STATUS_CHECK_COUNT": "3",
+    "CLEANUP_CRON": "0 3 * * *",
+    "STATUS_ENDPOINTS_JSON": "[{\"name\":\"API health\",\"type\":\"http\",\"url\":\"https://api.example.com/health\",\"method\":\"GET\",\"expectedStatus\":[200],\"timeoutMs\":5000,\"expectedBodyIncludes\":\"ok\",\"expectedJson\":{\"status\":\"ok\"}},{\"name\":\"SSL cert\",\"type\":\"ssl\",\"host\":\"example.com\",\"port\":443,\"warnBeforeDays\":14},{\"name\":\"DNS example.com\",\"type\":\"dns\",\"host\":\"example.com\",\"recordType\":\"A\"}]",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "status_page",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations",
+    },
+  ],
+}
