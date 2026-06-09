@@ -9,6 +9,7 @@ import type { AppEnv } from "./env";
 import { schema } from "./db";
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
+const hostname = process.env.HOST ?? "0.0.0.0";
 const databasePath = process.env.DATABASE_PATH ?? "./status.sqlite";
 
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -40,10 +41,11 @@ const env: AppEnv = {
 };
 
 const server = Bun.serve({
+  hostname,
   port,
   fetch: (request) => app.fetch(request, env),
 });
 
 console.log(
-  `Status page local server listening on http://localhost:${server.port}`,
+  `Status page local server listening on http://${server.hostname}:${server.port}`,
 );
