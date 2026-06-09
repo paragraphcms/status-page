@@ -393,6 +393,10 @@ function configDetails(config: StatusCheckConfig): SlackStatusConfigDetails {
         details.expectedBodyIncludes = config.expectedBodyIncludes
       }
 
+      if (config.expectedBodyExcludes) {
+        details.expectedBodyExcludes = config.expectedBodyExcludes
+      }
+
       return details
     }
     case 'ssl':

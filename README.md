@@ -18,6 +18,7 @@ Set `STATUS_ENDPOINTS_JSON` to a JSON array:
     "expectedStatus": [200],
     "timeoutMs": 10000,
     "expectedBodyIncludes": "ok",
+    "expectedBodyExcludes": "error",
     "expectedJson": { "status": "ok" }
   },
   {

@@ -15,6 +15,7 @@ export type HttpCheckConfig = BaseCheckConfig & {
   expectedStatus: number[]
   timeoutMs: number
   expectedBodyIncludes?: string
+  expectedBodyExcludes?: string
   expectedJson?: JsonObject
 }
 
@@ -116,6 +117,12 @@ export function parseStatusEndpoints(raw: unknown): ParsedStatusEndpoints {
           expectedBodyIncludes: readOptionalString(
             value,
             'expectedBodyIncludes',
+            prefix,
+            errors,
+          ),
+          expectedBodyExcludes: readOptionalString(
+            value,
+            'expectedBodyExcludes',
             prefix,
             errors,
           ),

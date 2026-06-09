@@ -64,7 +64,11 @@ async function checkHttp(
     let bodyOk = true
     const bodyMessages: string[] = []
 
-    if (config.expectedBodyIncludes !== undefined || config.expectedJson !== undefined) {
+    if (
+      config.expectedBodyIncludes !== undefined ||
+      config.expectedBodyExcludes !== undefined ||
+      config.expectedJson !== undefined
+    ) {
       const text = await response.text()
 
       if (
@@ -73,6 +77,14 @@ async function checkHttp(
       ) {
         bodyOk = false
         bodyMessages.push(`body does not include "${config.expectedBodyIncludes}"`)
+      }
+
+      if (
+        config.expectedBodyExcludes !== undefined &&
+        text.includes(config.expectedBodyExcludes)
+      ) {
+        bodyOk = false
+        bodyMessages.push(`body includes excluded text "${config.expectedBodyExcludes}"`)
       }
 
       if (config.expectedJson !== undefined) {
