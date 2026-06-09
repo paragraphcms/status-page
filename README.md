@@ -16,7 +16,7 @@ Set `STATUS_ENDPOINTS_JSON` to a JSON array:
     "url": "https://api.example.com/health",
     "method": "GET",
     "expectedStatus": [200],
-    "timeoutMs": 5000,
+    "timeoutMs": 10000,
     "expectedBodyIncludes": "ok",
     "expectedJson": { "status": "ok" }
   },
@@ -33,7 +33,7 @@ Set `STATUS_ENDPOINTS_JSON` to a JSON array:
     "type": "tcp",
     "host": "db.example.com",
     "port": 5432,
-    "timeoutMs": 3000
+    "timeoutMs": 10000
   },
   {
     "name": "DNS example.com",

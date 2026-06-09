@@ -112,7 +112,7 @@ export function parseStatusEndpoints(raw: unknown): ParsedStatusEndpoints {
           url,
           method: readOptionalString(value, 'method', prefix, errors) ?? 'GET',
           expectedStatus: readExpectedStatuses(value, prefix, errors),
-          timeoutMs: readPositiveInteger(value, 'timeoutMs', 5000, prefix, errors),
+          timeoutMs: readPositiveInteger(value, 'timeoutMs', 10000, prefix, errors),
           expectedBodyIncludes: readOptionalString(
             value,
             'expectedBodyIncludes',
@@ -142,7 +142,7 @@ export function parseStatusEndpoints(raw: unknown): ParsedStatusEndpoints {
             prefix,
             errors,
           ),
-          timeoutMs: readPositiveInteger(value, 'timeoutMs', 5000, prefix, errors),
+          timeoutMs: readPositiveInteger(value, 'timeoutMs', 10000, prefix, errors),
         })
         return
       }
@@ -158,7 +158,7 @@ export function parseStatusEndpoints(raw: unknown): ParsedStatusEndpoints {
           type,
           host,
           port: readPort(value, undefined, prefix, errors),
-          timeoutMs: readPositiveInteger(value, 'timeoutMs', 3000, prefix, errors),
+          timeoutMs: readPositiveInteger(value, 'timeoutMs', 10000, prefix, errors),
         })
         return
       }
@@ -183,7 +183,7 @@ export function parseStatusEndpoints(raw: unknown): ParsedStatusEndpoints {
           type,
           host,
           recordType,
-          timeoutMs: readPositiveInteger(value, 'timeoutMs', 5000, prefix, errors),
+          timeoutMs: readPositiveInteger(value, 'timeoutMs', 10000, prefix, errors),
         })
         return
       }
