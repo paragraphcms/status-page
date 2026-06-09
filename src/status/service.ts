@@ -1,0 +1,432 @@
+import {
+  deleteOldStatusResults,
+  insertStatusResultRows,
+  insertStatusResults,
+  listRecentStatusResultsByName,
+  listStatusHistory,
+} from '../db/repository'
+import type { StatusDb } from '../db'
+import type { NewStatusResult, StatusResult } from '../db/schema'
+import type { AppEnv } from '../env'
+import {
+  getDisplayDays,
+  getMockPreviousDaysPercent,
+  getRetentionDays,
+  getSlackStatusCheckCount,
+  getSlackWebhookUrl,
+} from '../env'
+import { runStatusCheck } from './checks'
+import { parseStatusEndpoints, type StatusCheckConfig } from './config'
+import { buildStatusSnapshot, type RunSummary, type StatusSnapshot } from './snapshot'
+
+const dayMs = 24 * 60 * 60 * 1000
+const mockCheckIntervalMs = 5 * 60 * 1000
+
+type SlackStatusCheck = {
+  status: boolean
+  checkedAt: Date
+}
+
+type SlackStatusConfigDetails = Record<string, string | number | number[]>
+
+type SlackStatusMonitor = {
+  name: string
+  type: StatusCheckConfig['type']
+  description?: string
+  status: boolean | null
+  failed: boolean
+  checks: SlackStatusCheck[]
+}
+
+type SlackStatusFailure = {
+  name: string
+  type: StatusCheckConfig['type']
+  description?: string
+  config: SlackStatusConfigDetails
+  failedChecks: SlackStatusCheck[]
+}
+
+export type SlackStatusSummary = {
+  checkedAt: Date
+  status: boolean
+  checkCount: number
+  slackConfigured: boolean
+  notificationSent: boolean
+  notificationError?: string
+  monitors: SlackStatusMonitor[]
+  failures: SlackStatusFailure[]
+  configErrors: string[]
+}
+
+export async function runConfiguredChecks(
+  env: AppEnv,
+  db: StatusDb,
+  now = new Date(),
+): Promise<RunSummary> {
+  const parsed = parseStatusEndpoints(env.STATUS_ENDPOINTS_JSON)
+  const retentionDays = getRetentionDays(env.RETENTION_DAYS)
+
+  await mockPreviousDaysIfNeeded(env, db, parsed.configs, retentionDays, now)
+
+  const results = await Promise.all(parsed.configs.map((config) => runStatusCheck(config, now)))
+
+  await insertStatusResults(
+    db,
+    results.map((result) => ({
+      name: result.name,
+      status: result.status,
+    })),
+    now,
+  )
+
+  return {
+    checkedAt: now,
+    status:
+      parsed.configs.length > 0 &&
+      parsed.errors.length === 0 &&
+      results.every((result) => result.status),
+    results,
+    configErrors: parsed.errors,
+  }
+}
+
+export async function getStatusSnapshot(
+  env: AppEnv,
+  db: StatusDb,
+  now = new Date(),
+): Promise<StatusSnapshot> {
+  const parsed = parseStatusEndpoints(env.STATUS_ENDPOINTS_JSON)
+  const publicConfigs = parsed.configs.filter((config) => !config.private)
+  const retentionDays = getRetentionDays(env.RETENTION_DAYS)
+  const displayDays = getDisplayDays(env.DISPLAY_DAYS, retentionDays)
+
+  await mockPreviousDaysIfNeeded(env, db, publicConfigs, retentionDays, now)
+
+  const history = await listStatusHistory(
+    db,
+    publicConfigs.map((config) => config.name),
+    displayDays,
+    now,
+  )
+
+  return buildStatusSnapshot(
+    publicConfigs,
+    history,
+    retentionDays,
+    displayDays,
+    now,
+    parsed.errors,
+  )
+}
+
+export async function getSlackStatusSummary(
+  env: AppEnv,
+  db: StatusDb,
+  now = new Date(),
+): Promise<SlackStatusSummary> {
+  const parsed = parseStatusEndpoints(env.STATUS_ENDPOINTS_JSON)
+  const checkCount = getSlackStatusCheckCount(env.SLACK_STATUS_CHECK_COUNT)
+  const webhookUrl = getSlackWebhookUrl(env)
+  const recentRows = await listRecentStatusResultsByName(
+    db,
+    parsed.configs.map((config) => config.name),
+    checkCount,
+  )
+  const rowsByName = groupRowsByName(recentRows)
+  const monitors: SlackStatusMonitor[] = []
+  const failures: SlackStatusFailure[] = []
+
+  for (const config of parsed.configs) {
+    const checks = (rowsByName.get(config.name) ?? []).map(rowToSlackStatusCheck)
+    const failedChecks = checks.filter((check) => !check.status)
+    const failed = failedChecks.length > 0
+
+    monitors.push({
+      name: config.name,
+      type: config.type,
+      description: config.description,
+      status: checks.at(0)?.status ?? null,
+      failed,
+      checks,
+    })
+
+    if (failed) {
+      failures.push({
+        name: config.name,
+        type: config.type,
+        description: config.description,
+        config: configDetails(config),
+        failedChecks,
+      })
+    }
+  }
+
+  let notificationSent = false
+  let notificationError: string | undefined
+
+  if (failures.length > 0) {
+    if (!webhookUrl) {
+      notificationError = 'Missing SLACK_WEBHOOK_URL.'
+    } else {
+      const notification = await sendSlackStatusNotification(
+        webhookUrl,
+        failures,
+        now,
+        checkCount,
+      )
+      notificationSent = notification.sent
+      notificationError = notification.error
+    }
+  }
+
+  return {
+    checkedAt: now,
+    status:
+      parsed.configs.length > 0 &&
+      parsed.errors.length === 0 &&
+      monitors.every((monitor) => monitor.checks.length > 0 && !monitor.failed),
+    checkCount,
+    slackConfigured: webhookUrl !== undefined,
+    notificationSent,
+    notificationError,
+    monitors,
+    failures,
+    configErrors: parsed.errors,
+  }
+}
+
+export async function cleanupOldResults(
+  env: AppEnv,
+  db: StatusDb,
+  now = new Date(),
+): Promise<{ retentionDays: number }> {
+  const retentionDays = getRetentionDays(env.RETENTION_DAYS)
+  await deleteOldStatusResults(db, retentionDays, now)
+
+  return { retentionDays }
+}
+
+async function mockPreviousDaysIfNeeded(
+  env: AppEnv,
+  db: StatusDb,
+  configs: StatusCheckConfig[],
+  retentionDays: number,
+  now: Date,
+): Promise<void> {
+  const successPercent = getMockPreviousDaysPercent(env.MOCK_PREVIOUS_DAYS)
+
+  if (successPercent === undefined || configs.length === 0) {
+    return
+  }
+
+  const names = configs.map((config) => config.name)
+  const history = await listStatusHistory(db, names, retentionDays, now)
+  const namesWithHistory = new Set(history.map((row) => row.name))
+  const missingNames = names.filter((name) => !namesWithHistory.has(name))
+
+  if (missingNames.length === 0) {
+    return
+  }
+
+  await insertStatusResultRows(
+    db,
+    buildMockStatusRows(missingNames, retentionDays, successPercent, now),
+  )
+}
+
+function buildMockStatusRows(
+  names: string[],
+  retentionDays: number,
+  successPercent: number,
+  now: Date,
+): NewStatusResult[] {
+  const cutoff = now.getTime() - retentionDays * dayMs
+  const startsAt = Math.ceil(cutoff / mockCheckIntervalMs) * mockCheckIntervalMs
+  const endsBefore = Math.floor(now.getTime() / mockCheckIntervalMs) * mockCheckIntervalMs
+  const sampleCount = Math.max(0, Math.floor((endsBefore - startsAt) / mockCheckIntervalMs))
+
+  if (sampleCount === 0) {
+    return []
+  }
+
+  return names.flatMap((name) => {
+    const downIndexes = buildMockDownIndexes(sampleCount, successPercent, name)
+
+    return Array.from({ length: sampleCount }, (_, index) => ({
+      name,
+      status: !downIndexes.has(index),
+      createdAt: new Date(startsAt + index * mockCheckIntervalMs),
+    }))
+  })
+}
+
+function buildMockDownIndexes(
+  sampleCount: number,
+  successPercent: number,
+  name: string,
+): Set<number> {
+  const downCount = sampleCount - Math.round((sampleCount * successPercent) / 100)
+  const downIndexes = new Set<number>()
+
+  if (downCount <= 0) {
+    return downIndexes
+  }
+
+  if (downCount >= sampleCount) {
+    return new Set(Array.from({ length: sampleCount }, (_, index) => index))
+  }
+
+  const offset = hashString(name) % sampleCount
+
+  for (let index = 0; index < downCount; index += 1) {
+    let downIndex = (Math.floor(((index + 0.5) * sampleCount) / downCount) + offset) % sampleCount
+
+    while (downIndexes.has(downIndex)) {
+      downIndex = (downIndex + 1) % sampleCount
+    }
+
+    downIndexes.add(downIndex)
+  }
+
+  return downIndexes
+}
+
+function hashString(value: string): number {
+  let hash = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0
+  }
+
+  return hash
+}
+
+function groupRowsByName(rows: StatusResult[]): Map<string, StatusResult[]> {
+  const byName = new Map<string, StatusResult[]>()
+
+  for (const row of rows) {
+    const current = byName.get(row.name) ?? []
+    current.push(row)
+    byName.set(row.name, current)
+  }
+
+  return byName
+}
+
+function rowToSlackStatusCheck(row: StatusResult): SlackStatusCheck {
+  return {
+    status: row.status,
+    checkedAt: row.createdAt,
+  }
+}
+
+async function sendSlackStatusNotification(
+  webhookUrl: string,
+  failures: SlackStatusFailure[],
+  checkedAt: Date,
+  checkCount: number,
+): Promise<{ sent: boolean; error?: string }> {
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: buildSlackStatusMessage(failures, checkedAt, checkCount),
+      }),
+    })
+
+    if (!response.ok) {
+      return {
+        sent: false,
+        error: `Slack webhook returned HTTP ${response.status}.`,
+      }
+    }
+
+    return { sent: true }
+  } catch (error) {
+    return { sent: false, error: errorMessage(error) }
+  }
+}
+
+function buildSlackStatusMessage(
+  failures: SlackStatusFailure[],
+  checkedAt: Date,
+  checkCount: number,
+): string {
+  const failureText = failures
+    .map((failure) =>
+      [
+        `*${escapeSlackText(failure.name)}* (${failure.type})`,
+        failure.description
+          ? `Description: ${escapeSlackText(failure.description)}`
+          : undefined,
+        `Config: ${escapeSlackText(formatConfigDetails(failure.config))}`,
+        `Failed checks: ${failure.failedChecks
+          .map((check) => check.checkedAt.toISOString())
+          .join(', ')}`,
+      ]
+        .filter((line): line is string => line !== undefined)
+        .join('\n'),
+    )
+    .join('\n\n')
+
+  return [
+    '*Status page alert*',
+    `Detected failed results in the last ${checkCount} check(s) per monitor.`,
+    `Checked at: ${checkedAt.toISOString()}`,
+    '',
+    failureText,
+  ].join('\n')
+}
+
+function configDetails(config: StatusCheckConfig): SlackStatusConfigDetails {
+  switch (config.type) {
+    case 'http': {
+      const details: SlackStatusConfigDetails = {
+        method: config.method,
+        url: config.url,
+        expectedStatus: config.expectedStatus,
+        timeoutMs: config.timeoutMs,
+      }
+
+      if (config.expectedBodyIncludes) {
+        details.expectedBodyIncludes = config.expectedBodyIncludes
+      }
+
+      return details
+    }
+    case 'ssl':
+      return {
+        host: config.host,
+        port: config.port,
+        warnBeforeDays: config.warnBeforeDays,
+        timeoutMs: config.timeoutMs,
+      }
+    case 'tcp':
+      return {
+        host: config.host,
+        port: config.port,
+        timeoutMs: config.timeoutMs,
+      }
+    case 'dns':
+      return {
+        host: config.host,
+        recordType: config.recordType,
+        timeoutMs: config.timeoutMs,
+      }
+  }
+}
+
+function formatConfigDetails(details: SlackStatusConfigDetails): string {
+  return Object.entries(details)
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(',') : String(value)}`)
+    .join(', ')
+}
+
+function escapeSlackText(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}

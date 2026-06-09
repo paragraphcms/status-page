@@ -1,0 +1,23 @@
+{
+  "name": "status-page",
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:local": "bun run --hot src/local.ts",
+    "start:local": "bun run src/local.ts",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply status_page --local",
+    "db:migrate:remote": "wrangler d1 migrations apply status_page --remote"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.24"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260608.1",
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.98.0"
+  }
+}
