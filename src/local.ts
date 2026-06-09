@@ -7,10 +7,13 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { createApp } from "./app";
 import type { AppEnv } from "./env";
 import { schema } from "./db";
+import { startLocalCronScheduler } from "./local-cron";
+import { cleanupOldResults, runConfiguredChecks } from "./status/service";
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 const hostname = process.env.HOST ?? "0.0.0.0";
 const databasePath = process.env.DATABASE_PATH ?? "./status.sqlite";
+const checksCron = process.env.CHECKS_CRON ?? "*/5 * * * *";
 
 mkdirSync(dirname(databasePath), { recursive: true });
 
@@ -40,6 +43,29 @@ const env: AppEnv = {
   SLACK_STATUS_CHECK_COUNT: process.env.SLACK_STATUS_CHECK_COUNT,
 };
 
+startLocalCronScheduler([
+  {
+    name: "checks",
+    expression: checksCron,
+    run: async (now) => {
+      const summary = await runConfiguredChecks(env, db, now);
+
+      console.log(
+        `[cron:checks] stored ${summary.results.length} result(s), status=${String(summary.status)}`,
+      );
+    },
+  },
+  {
+    name: "cleanup",
+    expression: env.CLEANUP_CRON ?? "0 3 * * *",
+    run: async (now) => {
+      const result = await cleanupOldResults(env, db, now);
+
+      console.log(`[cron:cleanup] retained ${result.retentionDays} day(s) of history`);
+    },
+  },
+]);
+
 const server = Bun.serve({
   hostname,
   port,
@@ -48,4 +74,7 @@ const server = Bun.serve({
 
 console.log(
   `Status page local server listening on http://${server.hostname}:${server.port}`,
+);
+console.log(
+  `Local cron scheduler enabled: checks="${checksCron}", cleanup="${env.CLEANUP_CRON ?? "0 3 * * *"}" (UTC)`,
 );

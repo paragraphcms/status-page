@@ -17,6 +17,7 @@ ENV STATUS_ENDPOINTS_JSON=[{\"name\":\"example.com\",\"type\":\"dns\",\"host\":\
 ENV RETENTION_DAYS=90
 ENV DISPLAY_DAYS=90
 ENV FOOTER_TITLE="example.com Open Status Page"
+ENV CHECKS_CRON="*/5 * * * *"
 ENV CLEANUP_CRON="0 3 * * *"
 ENV SLACK_WEBHOOK_URL=
 ENV SLACK_STATUS_CHECK_COUNT=3

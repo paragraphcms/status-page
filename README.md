@@ -58,6 +58,7 @@ Other env vars:
 - `FOOTER_TITLE` - footer label, default `Paragraph CMS Open Status Page`.
 - `META` - JSON array of `{ "name": string, "value": string }` entries. `og:*` entries render as `<meta property="...">`; all other entries render as `<meta name="...">`.
 - `CLEANUP_CRON` - cron expression used to identify the cleanup run, default `0 3 * * *`.
+- `CHECKS_CRON` - local/Docker cron expression for status checks, default `*/5 * * * *`. Wrangler deploys use the cron trigger in `wrangler.jsonc`.
 - `SLACK_WEBHOOK_URL` - incoming Slack webhook used by `GET /api/slack-status` when failures are detected.
 - `SLACK_STATUS_CHECK_COUNT` - how many latest stored checks per configured monitor are inspected by `GET /api/slack-status`, default `3`.
 
@@ -160,12 +161,13 @@ MOCK_PREVIOUS_DAYS=99,9832423 \
 DISPLAY_DAYS=60 \
 FOOTER_TITLE='Paragraph CMS Open Status Page' \
 SLACK_STATUS_CHECK_COUNT=3 \
+CHECKS_CRON='*/5 * * * *' \
 SLACK_WEBHOOK_URL='https://hooks.slack.com/services/REPLACE/ME' \
 STATUS_ENDPOINTS_JSON='[{"name":"DNS example.com","type":"dns","host":"example.com","recordType":"A"}]' \
 bun run start:local
 ```
 
-Docker uses Bun SQLite through the same Drizzle schema:
+Docker uses Bun SQLite through the same Drizzle schema and runs the local cron scheduler:
 
 ```sh
 docker build -t status-page .
