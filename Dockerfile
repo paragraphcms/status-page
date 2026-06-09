@@ -15,7 +15,6 @@ ENV FAVICON_URL=
 ENV META=[{\"name\":\"description\",\"value\":\"example.com\"},{\"name\":\"og:title\",\"value\":\"example.com\"},{\"name\":\"og:type\",\"value\":\"website\"},{\"name\":\"og:site_name\",\"value\":\"example.com\"}]
 ENV STATUS_ENDPOINTS_JSON=[{\"name\":\"example.com\",\"type\":\"dns\",\"host\":\"example.com\",\"recordType\":\"A\"}]
 ENV RETENTION_DAYS=90
-ENV MOCK_PREVIOUS_DAYS=99,9832423
 ENV DISPLAY_DAYS=90
 ENV FOOTER_TITLE="example.com Open Status Page"
 ENV CLEANUP_CRON="0 3 * * *"
