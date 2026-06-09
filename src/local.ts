@@ -34,6 +34,7 @@ const env: AppEnv = {
   DISPLAY_DAYS: process.env.DISPLAY_DAYS,
   PAGE_TITLE: process.env.PAGE_TITLE,
   FOOTER_TITLE: process.env.FOOTER_TITLE,
+  CLEANUP_CRON: process.env.CLEANUP_CRON,
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL,
   SLACK_STATUS_CHECK_COUNT: process.env.SLACK_STATUS_CHECK_COUNT,
 }
