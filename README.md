@@ -2,6 +2,12 @@
 
 Cloudflare Worker + Hono status page with scheduled checks and Drizzle history on D1.
 
+
+<p align="center">
+  <img src="./assets/paragraphcms-open-soruce-status-page.jpg" alt="@paragraphcms/status-page" />
+</p>
+
+
 ## Configure
 
 Set `STATUS_ENDPOINTS_JSON` to a JSON array:
