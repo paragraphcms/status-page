@@ -50,12 +50,45 @@ async function checkHttp(
   now: Date,
   startedAt: number,
 ): Promise<CheckOutcome> {
+  const firstAttempt = await checkHttpOnce(config)
+
+  if (firstAttempt.status || !config.softFail) {
+    return finish(config, now, startedAt, firstAttempt.status, firstAttempt.message)
+  }
+
+  await wait(config.softFailMilliseconds)
+
+  const secondAttempt = await checkHttpOnce(config)
+
+  if (secondAttempt.status) {
+    return finish(
+      config,
+      now,
+      startedAt,
+      true,
+      `${secondAttempt.message}; recovered on soft retry`,
+    )
+  }
+
+  return finish(
+    config,
+    now,
+    startedAt,
+    false,
+    `${firstAttempt.message}; retried after ${config.softFailMilliseconds}ms and failed again: ${secondAttempt.message}`,
+  )
+}
+
+async function checkHttpOnce(
+  config: HttpCheckConfig,
+): Promise<{ status: boolean; message: string }> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs)
 
   try {
     const response = await fetch(config.url, {
       method: config.method,
+      headers: config.headers,
       signal: controller.signal,
       redirect: 'follow',
     })
@@ -113,7 +146,12 @@ async function checkHttp(
           .filter(Boolean)
           .join('; ')
 
-    return finish(config, now, startedAt, status, message)
+    return { status, message }
+  } catch (error) {
+    return {
+      status: false,
+      message: errorMessage(error),
+    }
   } finally {
     clearTimeout(timeout)
   }
@@ -325,4 +363,10 @@ function errorMessage(error: unknown): string {
   }
 
   return String(error)
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds)
+  })
 }

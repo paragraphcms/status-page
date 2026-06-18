@@ -21,6 +21,9 @@ export type MetaEntry = {
   value: string
 }
 
+const DEFAULT_SOCIAL_IMAGE_PATH = '/paragraphcms-open-soruce-status-page.jpg'
+const DEFAULT_TWITTER_CARD = 'summary_large_image'
+
 export type AppRuntime = {
   getDb(env: AppEnv): StatusDb
   now?(): Date
@@ -78,27 +81,54 @@ export function getFaviconUrl(env: AppEnv): string | undefined {
   return nonEmptyString(env.FAVICON_URL)
 }
 
-export function getMeta(env: AppEnv): MetaEntry[] {
+export function getMeta(env: AppEnv, pageUrl: string | URL): MetaEntry[] {
+  const resolvedPageUrl = typeof pageUrl === 'string' ? new URL(pageUrl) : pageUrl
   const parsed = parseJsonArray(env.META)
-
-  return parsed.flatMap((entry) => {
+  const configured = parsed.flatMap((entry) => {
     if (!isPlainObject(entry)) {
       return []
     }
 
     const name = nonEmptyString(entry.name)
+    const value = nonEmptyString(entry.value)
 
-    if (!name || typeof entry.value !== 'string') {
+    if (!name || !value) {
       return []
     }
 
     return [
       {
         name,
-        value: entry.value.trim(),
+        value: normalizeMetaValue(name, value, resolvedPageUrl),
       },
     ]
   })
+  const configuredNames = new Set(configured.map((entry) => entry.name))
+  const fallbackImageUrl = new URL(DEFAULT_SOCIAL_IMAGE_PATH, resolvedPageUrl).toString()
+  const defaults: MetaEntry[] = []
+
+  if (!configuredNames.has('og:image')) {
+    defaults.push({
+      name: 'og:image',
+      value: fallbackImageUrl,
+    })
+  }
+
+  if (!configuredNames.has('twitter:image')) {
+    defaults.push({
+      name: 'twitter:image',
+      value: fallbackImageUrl,
+    })
+  }
+
+  if (!configuredNames.has('twitter:card')) {
+    defaults.push({
+      name: 'twitter:card',
+      value: DEFAULT_TWITTER_CARD,
+    })
+  }
+
+  return [...configured, ...defaults]
 }
 
 function nonEmptyString(value: unknown): string | undefined {
@@ -130,6 +160,17 @@ function parseJsonArray(raw: unknown): unknown[] {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function normalizeMetaValue(name: string, value: string, pageUrl: URL): string {
+  if (
+    (name === 'og:image' || name === 'twitter:image' || name === 'og:url') &&
+    value.startsWith('/')
+  ) {
+    return new URL(value, pageUrl).toString()
+  }
+
+  return value
 }
 
 function readPositiveInteger(raw: unknown, fallback: number, max: number): number {

@@ -21,8 +21,14 @@ Set `STATUS_ENDPOINTS_JSON` to a JSON array:
     "type": "http",
     "url": "https://api.example.com/health",
     "method": "GET",
+    "headers": {
+      "Authorization": "Bearer example-token",
+      "Auth-Version": "2024-06-01"
+    },
     "expectedStatus": [200],
     "timeoutMs": 10000,
+    "softFail": true,
+    "softFailMilliseconds": 500,
     "expectedBodyIncludes": "ok",
     "expectedBodyExcludes": "error",
     "expectedJson": { "status": "ok" }
@@ -53,6 +59,10 @@ Set `STATUS_ENDPOINTS_JSON` to a JSON array:
 
 Endpoint can set `"private": true` to run checks in the background without showing that monitor on `/` or `/api/status`. The default is `false`.
 
+HTTP endpoints can set `"softFail": true` to retry a failed check after `"softFailMilliseconds"` before recording it as down. The defaults are `false` and `500`.
+
+HTTP endpoints can set `"headers"` to send custom request headers such as `Authorization` or `Auth-Version`.
+
 Other env vars:
 
 - `LOGO_URL` - logo shown in the top-left header.
@@ -63,6 +73,7 @@ Other env vars:
 - `PAGE_TITLE` - page title and header label, default `Status Page`.
 - `FOOTER_TITLE` - footer label, default `Paragraph CMS Open Status Page`.
 - `META` - JSON array of `{ "name": string, "value": string }` entries. `og:*` entries render as `<meta property="...">`; all other entries render as `<meta name="...">`.
+- `og:image` and `twitter:image` default to `/paragraphcms-open-soruce-status-page.jpg`, resolved against the current request origin.
 - `CLEANUP_CRON` - cron expression used to identify the cleanup run, default `0 3 * * *`.
 - `CHECKS_CRON` - local/Docker cron expression for status checks, default `*/5 * * * *`. Wrangler deploys use the cron trigger in `wrangler.jsonc`.
 - `SLACK_WEBHOOK_URL` - incoming Slack webhook used by `GET /api/slack-status` when failures are detected.
@@ -79,10 +90,6 @@ Other env vars:
   {
     "name": "og:description",
     "value": "Live uptime, availability, and incident status for Paragraph CMS services."
-  },
-  {
-    "name": "og:image",
-    "value": "https://paragraphcms.com/paragraph-cms-logo.svg"
   },
   {
     "name": "og:title",
@@ -111,10 +118,21 @@ Other env vars:
   {
     "name": "og:url",
     "value": "https://status.paragraphcms.com/"
+  }
+]
+```
+
+Override the default social preview image by adding explicit entries to `META`:
+
+```json
+[
+  {
+    "name": "og:image",
+    "value": "https://paragraphcms.com/branding/paragraphcms-logo-color.svg"
   },
   {
     "name": "twitter:image",
-    "value": "https://paragraphcms.com/paragraph-cms-logo.svg"
+    "value": "https://paragraphcms.com/branding/paragraphcms-logo-color.svg"
   }
 ]
 ```
@@ -173,7 +191,7 @@ STATUS_ENDPOINTS_JSON='[{"name":"DNS example.com","type":"dns","host":"example.c
 bun run start:local
 ```
 
-Docker uses Bun SQLite through the same Drizzle schema and runs the local cron scheduler:
+Docker uses Bun SQLite through the same Drizzle schema, runs the local cron scheduler, and serves bundled files from `assets/` at the site root to match Cloudflare Workers assets:
 
 ```sh
 docker build -t status-page .
@@ -185,6 +203,8 @@ docker run -p 3000:3000 \
 Manual endpoints:
 
 - `GET /` - SSR status page.
+- `GET /robots.txt` - generated robots policy with a `Sitemap` entry for the current origin.
+- `GET /sitemap.xml` - generated sitemap for the status page homepage.
 - `GET /api/status` - JSON status snapshot.
 - `GET /api/checks/run` and `POST /api/checks/run` - run all checks and persist results.
 - `GET /api/slack-status` - read the latest `SLACK_STATUS_CHECK_COUNT` stored results per monitor and notify Slack through `SLACK_WEBHOOK_URL` if any inspected result failed.

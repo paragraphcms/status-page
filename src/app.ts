@@ -24,9 +24,28 @@ export function createApp(runtime: AppRuntime): Hono<{ Bindings: AppEnv }> {
         footerTitle: getFooterTitle(env),
         logoUrl: getLogoUrl(env),
         faviconUrl: getFaviconUrl(env),
-        meta: getMeta(env),
+        meta: getMeta(env, c.req.url),
       }),
     )
+  })
+
+  app.get('/robots.txt', (c) => {
+    const requestUrl = new URL(c.req.url)
+    const sitemapUrl = new URL('/sitemap.xml', requestUrl).toString()
+
+    return c.text(renderRobotsTxt(sitemapUrl), 200, {
+      'cache-control': 'public, max-age=3600',
+    })
+  })
+
+  app.get('/sitemap.xml', (c) => {
+    const requestUrl = new URL(c.req.url)
+    const homeUrl = new URL('/', requestUrl).toString()
+
+    return c.body(renderSitemapXml(homeUrl), 200, {
+      'cache-control': 'public, max-age=3600',
+      'content-type': 'application/xml; charset=utf-8',
+    })
   })
 
   app.get('/healthz', (c) => c.json({ status: true }))
@@ -84,4 +103,41 @@ export function createApp(runtime: AppRuntime): Hono<{ Bindings: AppEnv }> {
   })
 
   return app
+}
+
+function renderRobotsTxt(sitemapUrl: string): string {
+  return `User-agent: *
+Allow: /
+
+Sitemap: ${sitemapUrl}
+`
+}
+
+function renderSitemapXml(homeUrl: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${escapeXml(homeUrl)}</loc>
+  </url>
+</urlset>
+`
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/[<>&'"]/g, (character) => {
+    switch (character) {
+      case '<':
+        return '&lt;'
+      case '>':
+        return '&gt;'
+      case '&':
+        return '&amp;'
+      case "'":
+        return '&apos;'
+      case '"':
+        return '&quot;'
+      default:
+        return character
+    }
+  })
 }

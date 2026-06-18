@@ -14,6 +14,7 @@ const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 const hostname = process.env.HOST ?? "0.0.0.0";
 const databasePath = process.env.DATABASE_PATH ?? "./status.sqlite";
 const checksCron = process.env.CHECKS_CRON ?? "*/5 * * * *";
+const legacyAssetsPrefix = "/assets/";
 
 mkdirSync(dirname(databasePath), { recursive: true });
 
@@ -69,7 +70,15 @@ startLocalCronScheduler([
 const server = Bun.serve({
   hostname,
   port,
-  fetch: (request) => app.fetch(request, env),
+  fetch: async (request) => {
+    const assetResponse = await serveLocalAsset(request);
+
+    if (assetResponse) {
+      return assetResponse;
+    }
+
+    return app.fetch(request, env);
+  },
 });
 
 console.log(
@@ -78,3 +87,46 @@ console.log(
 console.log(
   `Local cron scheduler enabled: checks="${checksCron}", cleanup="${env.CLEANUP_CRON ?? "0 3 * * *"}" (UTC)`,
 );
+
+async function serveLocalAsset(request: Request): Promise<Response | undefined> {
+  const url = new URL(request.url);
+  const relativePath = getLocalAssetPath(url.pathname);
+
+  if (relativePath === undefined) {
+    return undefined;
+  }
+
+  if (!relativePath || relativePath.includes("..") || relativePath.includes("\\")) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const file = Bun.file(`assets/${relativePath}`);
+
+  if (!(await file.exists())) {
+    return undefined;
+  }
+
+  return new Response(file, {
+    headers: {
+      "cache-control": "public, max-age=3600",
+      "content-type": file.type || "application/octet-stream",
+    },
+  });
+}
+
+function getLocalAssetPath(pathname: string): string | undefined {
+  if (
+    pathname === "/" ||
+    pathname === "/healthz" ||
+    pathname === "/api" ||
+    pathname.startsWith("/api/")
+  ) {
+    return undefined;
+  }
+
+  if (pathname.startsWith(legacyAssetsPrefix)) {
+    return pathname.slice(legacyAssetsPrefix.length);
+  }
+
+  return pathname.startsWith("/") ? pathname.slice(1) : undefined;
+}

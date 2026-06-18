@@ -27,7 +27,7 @@ type SlackStatusCheck = {
   checkedAt: Date
 }
 
-type SlackStatusConfigDetails = Record<string, string | number | number[]>
+type SlackStatusConfigDetails = Record<string, string | number | boolean | number[]>
 
 type SlackStatusMonitor = {
   name: string
@@ -389,12 +389,21 @@ function configDetails(config: StatusCheckConfig): SlackStatusConfigDetails {
         timeoutMs: config.timeoutMs,
       }
 
+      if (config.softFail) {
+        details.softFail = true
+        details.softFailMilliseconds = config.softFailMilliseconds
+      }
+
       if (config.expectedBodyIncludes) {
         details.expectedBodyIncludes = config.expectedBodyIncludes
       }
 
       if (config.expectedBodyExcludes) {
         details.expectedBodyExcludes = config.expectedBodyExcludes
+      }
+
+      if (config.headers && Object.keys(config.headers).length > 0) {
+        details.headers = formatRedactedHeaders(config.headers)
       }
 
       return details
@@ -424,6 +433,13 @@ function configDetails(config: StatusCheckConfig): SlackStatusConfigDetails {
 function formatConfigDetails(details: SlackStatusConfigDetails): string {
   return Object.entries(details)
     .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(',') : String(value)}`)
+    .join(', ')
+}
+
+function formatRedactedHeaders(headers: Record<string, string>): string {
+  return Object.keys(headers)
+    .sort((left, right) => left.localeCompare(right))
+    .map((name) => `${name}: [redacted]`)
     .join(', ')
 }
 

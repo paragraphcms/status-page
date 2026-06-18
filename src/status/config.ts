@@ -12,8 +12,11 @@ export type HttpCheckConfig = BaseCheckConfig & {
   type: 'http'
   url: string
   method: string
+  headers?: Record<string, string>
   expectedStatus: number[]
   timeoutMs: number
+  softFail: boolean
+  softFailMilliseconds: number
   expectedBodyIncludes?: string
   expectedBodyExcludes?: string
   expectedJson?: JsonObject
@@ -112,8 +115,17 @@ export function parseStatusEndpoints(raw: unknown): ParsedStatusEndpoints {
           type,
           url,
           method: readOptionalString(value, 'method', prefix, errors) ?? 'GET',
+          headers: readHttpHeaders(value, prefix, errors),
           expectedStatus: readExpectedStatuses(value, prefix, errors),
           timeoutMs: readPositiveInteger(value, 'timeoutMs', 10000, prefix, errors),
+          softFail: readOptionalBoolean(value, 'softFail', prefix, errors),
+          softFailMilliseconds: readNonNegativeInteger(
+            value,
+            'softFailMilliseconds',
+            500,
+            prefix,
+            errors,
+          ),
           expectedBodyIncludes: readOptionalString(
             value,
             'expectedBodyIncludes',
@@ -302,6 +314,49 @@ function readExpectedStatuses(
   return statuses
 }
 
+function readHttpHeaders(
+  object: Record<string, unknown>,
+  prefix: string,
+  errors: string[],
+): Record<string, string> | undefined {
+  const value = object.headers
+
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (!isPlainObject(value)) {
+    errors.push(`${prefix}.headers must be an object of HTTP header name/value pairs.`)
+    return undefined
+  }
+
+  const headers: Record<string, string> = {}
+
+  for (const [rawName, rawValue] of Object.entries(value)) {
+    const name = rawName.trim()
+
+    if (!isValidHttpHeaderName(name)) {
+      errors.push(`${prefix}.headers contains an invalid header name "${rawName}".`)
+      continue
+    }
+
+    if (
+      typeof rawValue !== 'string' &&
+      typeof rawValue !== 'number' &&
+      typeof rawValue !== 'boolean'
+    ) {
+      errors.push(
+        `${prefix}.headers.${name} must be a string, number, or boolean.`,
+      )
+      continue
+    }
+
+    headers[name] = String(rawValue)
+  }
+
+  return headers
+}
+
 function readExpectedJson(
   object: Record<string, unknown>,
   prefix: string,
@@ -362,12 +417,37 @@ function readPositiveInteger(
   return Number(value)
 }
 
+function readNonNegativeInteger(
+  object: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  prefix: string,
+  errors: string[],
+): number {
+  const value = object[key]
+
+  if (value === undefined) {
+    return fallback
+  }
+
+  if (!isInteger(value) || Number(value) < 0) {
+    errors.push(`${prefix}.${key} must be a non-negative integer.`)
+    return fallback
+  }
+
+  return Number(value)
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isInteger(value: unknown): boolean {
   return typeof value === 'number' && Number.isInteger(value)
+}
+
+function isValidHttpHeaderName(value: string): boolean {
+  return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value)
 }
 
 function isHttpUrl(value: string): boolean {
