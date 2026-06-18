@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/d1'
 
 import { createApp } from './app'
 import type { AppEnv } from './env'
-import { cleanupOldResults, runConfiguredChecks } from './status/service'
+import { cleanupOldResults, runConfiguredChecks, summarizeStatusHistory } from './status/service'
 import { schema } from './db'
 
 function getD1Db(env: AppEnv) {
@@ -25,6 +25,8 @@ const worker: ExportedHandler<AppEnv> = {
     const job =
       controller.cron === (env.CLEANUP_CRON ?? '0 3 * * *')
         ? cleanupOldResults(env, db)
+        : controller.cron === (env.SUMMARY_CRON ?? '10 0 * * *')
+          ? summarizeStatusHistory(env, db)
         : runConfiguredChecks(env, db)
 
     ctx.waitUntil(job)

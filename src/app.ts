@@ -7,6 +7,7 @@ import {
   getSlackStatusSummary,
   getStatusSnapshot,
   runConfiguredChecks,
+  summarizeStatusHistory,
 } from './status/service'
 import { renderStatusPage } from './ui/render'
 
@@ -86,6 +87,22 @@ export function createApp(runtime: AppRuntime): Hono<{ Bindings: AppEnv }> {
     const env = c.env
     const db = runtime.getDb(env)
     const result = await cleanupOldResults(env, db, runtime.now?.())
+
+    return c.json({ status: true, ...result })
+  })
+
+  app.post('/api/summaries/run', async (c) => {
+    const env = c.env
+    const db = runtime.getDb(env)
+    const result = await summarizeStatusHistory(env, db, runtime.now?.())
+
+    return c.json({ status: true, ...result })
+  })
+
+  app.get('/api/summaries/run', async (c) => {
+    const env = c.env
+    const db = runtime.getDb(env)
+    const result = await summarizeStatusHistory(env, db, runtime.now?.())
 
     return c.json({ status: true, ...result })
   })

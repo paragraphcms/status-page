@@ -1,9 +1,8 @@
-import type { StatusResult } from '../db/schema'
+import type { StatusDaySummary, StatusResult } from '../db/schema'
 import type { CheckOutcome } from './checks'
 import type { StatusCheckConfig } from './config'
+import { dayMs, minuteMs, startOfUtcDay } from './time'
 
-const dayMs = 24 * 60 * 60 * 1000
-const minuteMs = 60 * 1000
 const defaultCheckIntervalMs = 5 * minuteMs
 
 export type DayStatus = 'up' | 'down' | 'empty'
@@ -47,29 +46,76 @@ export type RunSummary = {
 
 export function buildStatusSnapshot(
   configs: StatusCheckConfig[],
-  rows: StatusResult[],
+  todayRows: StatusResult[],
+  historicalSummaries: StatusDaySummary[],
   retentionDays: number,
   displayDays: number,
   generatedAt: Date,
   configErrors: string[],
 ): StatusSnapshot {
-  const rowsByName = groupRowsByName(rows)
+  const rowsByName = groupRowsByName(todayRows)
+  const summariesByName = groupSummariesByName(historicalSummaries)
   const days = buildDayRange(displayDays, generatedAt)
 
   const monitors = configs.map((config) => {
     const history = rowsByName.get(config.name) ?? []
-    const latest = history.at(-1) ?? null
-    const total = history.length
-    const up = history.filter((row) => row.status).length
+    const summaries = summariesByName.get(config.name) ?? []
+    const latestRow = history.at(-1) ?? null
+    const latestSummary = summaries.at(-1) ?? null
+    const latest =
+      latestRow &&
+      (!latestSummary ||
+        latestRow.createdAt.getTime() >= latestSummary.latestCheckedAt.getTime())
+        ? { status: latestRow.status, checkedAt: latestRow.createdAt }
+        : latestSummary
+          ? { status: latestSummary.latestStatus, checkedAt: latestSummary.latestCheckedAt }
+          : null
+    const total =
+      history.length + summaries.reduce((sum, summary) => sum + summary.totalChecks, 0)
+    const up =
+      history.filter((row) => row.status).length +
+      summaries.reduce((sum, summary) => sum + (summary.totalChecks - summary.downChecks), 0)
+    const summariesByDay = new Map(
+      summaries.map((summary) => [summary.dayStartAt.getTime(), summary]),
+    )
 
     return {
       name: config.name,
       type: config.type,
       description: config.description,
       latestStatus: latest?.status ?? null,
-      latestCheckedAt: latest?.createdAt ?? null,
+      latestCheckedAt: latest?.checkedAt ?? null,
       uptimePercent: total > 0 ? (up / total) * 100 : null,
       days: days.map((day) => {
+        const summary = summariesByDay.get(day.startsAt.getTime())
+
+        if (summary) {
+          const status =
+            summary.totalChecks === 0 && summary.downMinutes === 0
+              ? 'empty'
+              : summary.downChecks === 0 && summary.downMinutes === 0
+                ? 'up'
+                : 'down'
+
+          return {
+            key: day.key,
+            label: day.label,
+            status,
+            tooltip: formatDayTooltip(day.longLabel, status, summary.downMinutes),
+            totalChecks: summary.totalChecks,
+            downChecks: summary.downChecks,
+            downMinutes: summary.downMinutes,
+            downPercent: calculateDownPercent(
+              summary.totalChecks,
+              summary.downChecks,
+              summary.downMinutes,
+              day.startsAt,
+              day.endsAt,
+              generatedAt,
+            ),
+          }
+        }
+
         const dayRows = history.filter(
           (row) =>
             row.createdAt.getTime() >= day.startsAt.getTime() &&
@@ -139,6 +185,24 @@ function groupRowsByName(rows: StatusResult[]): Map<string, StatusResult[]> {
   return byName
 }
 
+function groupSummariesByName(
+  rows: StatusDaySummary[],
+): Map<string, StatusDaySummary[]> {
+  const byName = new Map<string, StatusDaySummary[]>()
+
+  for (const row of rows) {
+    const current = byName.get(row.name) ?? []
+    current.push(row)
+    byName.set(row.name, current)
+  }
+
+  for (const summaries of byName.values()) {
+    summaries.sort((a, b) => a.dayStartAt.getTime() - b.dayStartAt.getTime())
+  }
+
+  return byName
+}
+
 function buildDayRange(dayCount: number, now: Date) {
   const today = startOfUtcDay(now)
 
@@ -159,10 +223,6 @@ function buildDayRange(dayCount: number, now: Date) {
       longLabel: formatLongUtcDate(startsAt),
     }
   })
-}
-
-function startOfUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
 }
 
 function calculateDownMinutes(

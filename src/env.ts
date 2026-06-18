@@ -11,6 +11,7 @@ export type AppEnv = {
   DISPLAY_DAYS?: string | number
   PAGE_TITLE?: string
   FOOTER_TITLE?: string
+  SUMMARY_CRON?: string
   CLEANUP_CRON?: string
   SLACK_WEBHOOK_URL?: string
   SLACK_STATUS_CHECK_COUNT?: string | number

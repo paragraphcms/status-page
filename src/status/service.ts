@@ -1,9 +1,14 @@
 import {
+  deleteOldStatusDaySummaries,
   deleteOldStatusResults,
+  hasStoredStatusHistory,
+  hasUnsummarizedHistoricalStatusResults,
   insertStatusResultRows,
   insertStatusResults,
+  listStatusDaySummaries,
   listRecentStatusResultsByName,
-  listStatusHistory,
+  listStatusResultsBetween,
+  summarizeHistoricalStatusResults,
 } from '../db/repository'
 import type { StatusDb } from '../db'
 import type { NewStatusResult, StatusResult } from '../db/schema'
@@ -18,8 +23,8 @@ import {
 import { runStatusCheck } from './checks'
 import { parseStatusEndpoints, type StatusCheckConfig } from './config'
 import { buildStatusSnapshot, type RunSummary, type StatusSnapshot } from './snapshot'
+import { dayMs, startOfUtcDay } from './time'
 
-const dayMs = 24 * 60 * 60 * 1000
 const mockCheckIntervalMs = 5 * 60 * 1000
 
 type SlackStatusCheck = {
@@ -65,8 +70,7 @@ export async function runConfiguredChecks(
 ): Promise<RunSummary> {
   const parsed = parseStatusEndpoints(env.STATUS_ENDPOINTS_JSON)
   const retentionDays = getRetentionDays(env.RETENTION_DAYS)
-
-  await mockPreviousDaysIfNeeded(env, db, parsed.configs, retentionDays, now)
+  await ensureHistoricalStatusCompaction(env, db, parsed.configs, retentionDays, now)
 
   const results = await Promise.all(parsed.configs.map((config) => runStatusCheck(config, now)))
 
@@ -99,19 +103,22 @@ export async function getStatusSnapshot(
   const publicConfigs = parsed.configs.filter((config) => !config.private)
   const retentionDays = getRetentionDays(env.RETENTION_DAYS)
   const displayDays = getDisplayDays(env.DISPLAY_DAYS, retentionDays)
+  const todayStart = startOfUtcDay(now)
+  const displayStart = new Date(todayStart.getTime() - Math.max(displayDays - 1, 0) * dayMs)
+  await ensureHistoricalStatusCompaction(env, db, publicConfigs, retentionDays, now)
 
-  await mockPreviousDaysIfNeeded(env, db, publicConfigs, retentionDays, now)
-
-  const history = await listStatusHistory(
-    db,
-    publicConfigs.map((config) => config.name),
-    displayDays,
-    now,
-  )
+  const names = publicConfigs.map((config) => config.name)
+  const [historicalSummaries, todayRows] = await Promise.all([
+    displayDays > 1
+      ? listStatusDaySummaries(db, names, displayStart, todayStart)
+      : Promise.resolve([]),
+    listStatusResultsBetween(db, names, todayStart),
+  ])
 
   return buildStatusSnapshot(
     publicConfigs,
-    history,
+    todayRows,
+    historicalSummaries,
     retentionDays,
     displayDays,
     now,
@@ -201,9 +208,24 @@ export async function cleanupOldResults(
   now = new Date(),
 ): Promise<{ retentionDays: number }> {
   const retentionDays = getRetentionDays(env.RETENTION_DAYS)
-  await deleteOldStatusResults(db, retentionDays, now)
+  await Promise.all([
+    deleteOldStatusResults(db, retentionDays, now),
+    deleteOldStatusDaySummaries(db, retentionDays, now),
+  ])
 
   return { retentionDays }
+}
+
+export async function summarizeStatusHistory(
+  env: AppEnv,
+  db: StatusDb,
+  now = new Date(),
+): Promise<{ summarizedDays: number; deletedRows: number }> {
+  const parsed = parseStatusEndpoints(env.STATUS_ENDPOINTS_JSON)
+  const retentionDays = getRetentionDays(env.RETENTION_DAYS)
+  await mockPreviousDaysIfNeeded(env, db, parsed.configs, retentionDays, now)
+
+  return await summarizeHistoricalStatusResults(db, now)
 }
 
 async function mockPreviousDaysIfNeeded(
@@ -212,26 +234,40 @@ async function mockPreviousDaysIfNeeded(
   configs: StatusCheckConfig[],
   retentionDays: number,
   now: Date,
-): Promise<void> {
+): Promise<boolean> {
   const successPercent = getMockPreviousDaysPercent(env.MOCK_PREVIOUS_DAYS)
 
   if (successPercent === undefined || configs.length === 0) {
-    return
+    return false
   }
 
   const names = configs.map((config) => config.name)
-  const history = await listStatusHistory(db, names, retentionDays, now)
-  const namesWithHistory = new Set(history.map((row) => row.name))
-  const missingNames = names.filter((name) => !namesWithHistory.has(name))
+  const hasHistory = await hasStoredStatusHistory(db, names)
 
-  if (missingNames.length === 0) {
-    return
+  if (hasHistory) {
+    return false
   }
 
   await insertStatusResultRows(
     db,
-    buildMockStatusRows(missingNames, retentionDays, successPercent, now),
+    buildMockStatusRows(names, retentionDays, successPercent, now),
   )
+
+  return true
+}
+
+async function ensureHistoricalStatusCompaction(
+  env: AppEnv,
+  db: StatusDb,
+  configs: StatusCheckConfig[],
+  retentionDays: number,
+  now: Date,
+): Promise<void> {
+  const mockedHistory = await mockPreviousDaysIfNeeded(env, db, configs, retentionDays, now)
+
+  if (mockedHistory || (await hasUnsummarizedHistoricalStatusResults(db, now))) {
+    await summarizeHistoricalStatusResults(db, now)
+  }
 }
 
 function buildMockStatusRows(

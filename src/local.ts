@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
@@ -8,12 +8,17 @@ import { createApp } from "./app";
 import type { AppEnv } from "./env";
 import { schema } from "./db";
 import { startLocalCronScheduler } from "./local-cron";
-import { cleanupOldResults, runConfiguredChecks } from "./status/service";
+import {
+  cleanupOldResults,
+  runConfiguredChecks,
+  summarizeStatusHistory,
+} from "./status/service";
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 const hostname = process.env.HOST ?? "0.0.0.0";
 const databasePath = process.env.DATABASE_PATH ?? "./status.sqlite";
 const checksCron = process.env.CHECKS_CRON ?? "*/5 * * * *";
+const summaryCron = process.env.SUMMARY_CRON ?? "10 0 * * *";
 const legacyAssetsPrefix = "/assets/";
 
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -22,7 +27,7 @@ const sqlite = new Database(databasePath, {
   create: true,
   readwrite: true,
 });
-sqlite.exec(await Bun.file("migrations/0000_status_results.sql").text());
+await applyMigrations(sqlite);
 
 const db = drizzle(sqlite, { schema });
 const app = createApp({
@@ -39,6 +44,7 @@ const env: AppEnv = {
   DISPLAY_DAYS: process.env.DISPLAY_DAYS,
   PAGE_TITLE: process.env.PAGE_TITLE,
   FOOTER_TITLE: process.env.FOOTER_TITLE,
+  SUMMARY_CRON: process.env.SUMMARY_CRON,
   CLEANUP_CRON: process.env.CLEANUP_CRON,
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL,
   SLACK_STATUS_CHECK_COUNT: process.env.SLACK_STATUS_CHECK_COUNT,
@@ -53,6 +59,17 @@ startLocalCronScheduler([
 
       console.log(
         `[cron:checks] stored ${summary.results.length} result(s), status=${String(summary.status)}`,
+      );
+    },
+  },
+  {
+    name: "summary",
+    expression: summaryCron,
+    run: async (now) => {
+      const result = await summarizeStatusHistory(env, db, now);
+
+      console.log(
+        `[cron:summary] summarized ${result.summarizedDays} day(s), deleted ${result.deletedRows} raw row(s)`,
       );
     },
   },
@@ -85,7 +102,7 @@ console.log(
   `Status page local server listening on http://${server.hostname}:${server.port}`,
 );
 console.log(
-  `Local cron scheduler enabled: checks="${checksCron}", cleanup="${env.CLEANUP_CRON ?? "0 3 * * *"}" (UTC)`,
+  `Local cron scheduler enabled: checks="${checksCron}", summary="${summaryCron}", cleanup="${env.CLEANUP_CRON ?? "0 3 * * *"}" (UTC)`,
 );
 
 async function serveLocalAsset(request: Request): Promise<Response | undefined> {
@@ -129,4 +146,14 @@ function getLocalAssetPath(pathname: string): string | undefined {
   }
 
   return pathname.startsWith("/") ? pathname.slice(1) : undefined;
+}
+
+async function applyMigrations(sqlite: Database): Promise<void> {
+  const migrationFiles = readdirSync("migrations")
+    .filter((file) => file.endsWith(".sql"))
+    .sort();
+
+  for (const file of migrationFiles) {
+    sqlite.exec(await Bun.file(join("migrations", file)).text());
+  }
 }
