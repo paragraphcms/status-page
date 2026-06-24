@@ -77,8 +77,8 @@ Other env vars:
 - `SUMMARY_CRON` - cron expression used to roll up every previous UTC day into `status_daily_summaries`, default `10 0 * * *`.
 - `CLEANUP_CRON` - cron expression used to identify the cleanup run, default `0 3 * * *`.
 - `CHECKS_CRON` - local/Docker cron expression for status checks, default `*/5 * * * *`. Wrangler deploys use the cron trigger in `wrangler.jsonc`.
-- `SLACK_WEBHOOK_URL` - incoming Slack webhook used by `GET /api/slack-status` when failures are detected.
-- `SLACK_STATUS_CHECK_COUNT` - how many latest stored checks per configured monitor are inspected by `GET /api/slack-status`, default `3`.
+- `SLACK_WEBHOOK_URL` - incoming Slack webhook used after each checks run and by `GET /api/slack-status` when consecutive failures reach the threshold.
+- `SLACK_STATUS_CHECK_COUNT` - how many consecutive failed checks per configured monitor must be recorded before Slack is notified, default `3`.
 
 `META` example:
 
@@ -210,8 +210,8 @@ Manual endpoints:
 - `GET /robots.txt` - generated robots policy with a `Sitemap` entry for the current origin.
 - `GET /sitemap.xml` - generated sitemap for the status page homepage.
 - `GET /api/status` - JSON status snapshot.
-- `GET /api/checks/run` and `POST /api/checks/run` - run all checks and persist results.
-- `GET /api/slack-status` - read the latest `SLACK_STATUS_CHECK_COUNT` stored results per monitor and notify Slack through `SLACK_WEBHOOK_URL` if any inspected result failed.
+- `GET /api/checks/run` and `POST /api/checks/run` - run all checks, persist results, and notify Slack when the latest `SLACK_STATUS_CHECK_COUNT` checks for a monitor are consecutive failures.
+- `GET /api/slack-status` - read the latest `SLACK_STATUS_CHECK_COUNT` stored results per monitor and notify Slack through `SLACK_WEBHOOK_URL` when all inspected results for a monitor are consecutive failures.
 - `GET /api/summaries/run` and `POST /api/summaries/run` - summarize every UTC day before today into `status_daily_summaries` and delete the summarized raw rows.
 - `POST /api/cleanup` - delete rows older than `RETENTION_DAYS`.
 

@@ -198,8 +198,10 @@ export async function hasUnsummarizedHistoricalStatusResults(
 export async function summarizeHistoricalStatusResults(
   db: StatusDb,
   now = new Date(),
+  keepRecentRowsPerName = 0,
 ): Promise<{ summarizedDays: number; deletedRows: number }> {
   const todayStartMs = startOfUtcDay(now).getTime()
+  const keepRecentRowsClause = recentRowsKeepClause('r', keepRecentRowsPerName)
   const pendingDays = await queryCount(
     db,
     `
@@ -295,6 +297,7 @@ export async function summarizeHistoricalStatusResults(
           WHERE s.name = r.name
             AND s.day_start_at = ${historicalDayStartSql('r.created_at')}
         )
+        ${keepRecentRowsClause}
     `,
   )
 
@@ -309,6 +312,7 @@ export async function summarizeHistoricalStatusResults(
             WHERE s.name = status_results.name
               AND s.day_start_at = ${historicalDayStartSql('status_results.created_at')}
           )
+          ${recentRowsKeepClause('status_results', keepRecentRowsPerName)}
       `),
     )
   }
@@ -377,4 +381,27 @@ function historicalDayBucketSql(createdAtSql: string): string {
 
 function historicalDayStartSql(createdAtSql: string): string {
   return `${historicalDayBucketSql(createdAtSql)} * ${dayMs}`
+}
+
+function recentRowsKeepClause(rowReference: string, keepRecentRowsPerName: number): string {
+  const keepCount = Math.max(0, Math.floor(keepRecentRowsPerName))
+
+  if (keepCount === 0) {
+    return ''
+  }
+
+  return `
+        AND ${rowReference}.id NOT IN (
+          SELECT recent.id
+          FROM (
+            SELECT
+              r.id,
+              ROW_NUMBER() OVER (
+                PARTITION BY r.name
+                ORDER BY r.created_at DESC, r.id DESC
+              ) AS recent_position
+            FROM status_results r
+          ) recent
+          WHERE recent.recent_position <= ${keepCount}
+        )`
 }

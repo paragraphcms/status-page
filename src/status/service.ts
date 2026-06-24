@@ -22,7 +22,12 @@ import {
 } from '../env'
 import { runStatusCheck } from './checks'
 import { parseStatusEndpoints, type StatusCheckConfig } from './config'
-import { buildStatusSnapshot, type RunSummary, type StatusSnapshot } from './snapshot'
+import {
+  buildStatusSnapshot,
+  type RunSlackStatus,
+  type RunSummary,
+  type StatusSnapshot,
+} from './snapshot'
 import { dayMs, startOfUtcDay } from './time'
 
 const mockCheckIntervalMs = 5 * 60 * 1000
@@ -83,6 +88,14 @@ export async function runConfiguredChecks(
     now,
   )
 
+  const slackStatus = await getSlackStatusSummaryForConfigs(
+    env,
+    db,
+    parsed.configs,
+    parsed.errors,
+    now,
+  )
+
   return {
     checkedAt: now,
     status:
@@ -90,6 +103,7 @@ export async function runConfiguredChecks(
       parsed.errors.length === 0 &&
       results.every((result) => result.status),
     results,
+    slack: toRunSlackStatus(slackStatus),
     configErrors: parsed.errors,
   }
 }
@@ -132,21 +146,32 @@ export async function getSlackStatusSummary(
   now = new Date(),
 ): Promise<SlackStatusSummary> {
   const parsed = parseStatusEndpoints(env.STATUS_ENDPOINTS_JSON)
+
+  return await getSlackStatusSummaryForConfigs(env, db, parsed.configs, parsed.errors, now)
+}
+
+async function getSlackStatusSummaryForConfigs(
+  env: AppEnv,
+  db: StatusDb,
+  configs: StatusCheckConfig[],
+  configErrors: string[],
+  now: Date,
+): Promise<SlackStatusSummary> {
   const checkCount = getSlackStatusCheckCount(env.SLACK_STATUS_CHECK_COUNT)
   const webhookUrl = getSlackWebhookUrl(env)
   const recentRows = await listRecentStatusResultsByName(
     db,
-    parsed.configs.map((config) => config.name),
+    configs.map((config) => config.name),
     checkCount,
   )
   const rowsByName = groupRowsByName(recentRows)
   const monitors: SlackStatusMonitor[] = []
   const failures: SlackStatusFailure[] = []
 
-  for (const config of parsed.configs) {
+  for (const config of configs) {
     const checks = (rowsByName.get(config.name) ?? []).map(rowToSlackStatusCheck)
-    const failedChecks = checks.filter((check) => !check.status)
-    const failed = failedChecks.length > 0
+    const consecutiveFailedChecks = leadingFailedChecks(checks)
+    const failed = consecutiveFailedChecks.length >= checkCount
 
     monitors.push({
       name: config.name,
@@ -163,7 +188,7 @@ export async function getSlackStatusSummary(
         type: config.type,
         description: config.description,
         config: configDetails(config),
-        failedChecks,
+        failedChecks: consecutiveFailedChecks,
       })
     }
   }
@@ -189,8 +214,8 @@ export async function getSlackStatusSummary(
   return {
     checkedAt: now,
     status:
-      parsed.configs.length > 0 &&
-      parsed.errors.length === 0 &&
+      configs.length > 0 &&
+      configErrors.length === 0 &&
       monitors.every((monitor) => monitor.checks.length > 0 && !monitor.failed),
     checkCount,
     slackConfigured: webhookUrl !== undefined,
@@ -198,7 +223,22 @@ export async function getSlackStatusSummary(
     notificationError,
     monitors,
     failures,
-    configErrors: parsed.errors,
+    configErrors,
+  }
+}
+
+function toRunSlackStatus(summary: SlackStatusSummary): RunSlackStatus {
+  return {
+    checkCount: summary.checkCount,
+    slackConfigured: summary.slackConfigured,
+    notificationSent: summary.notificationSent,
+    notificationError: summary.notificationError,
+    failures: summary.failures.map((failure) => ({
+      name: failure.name,
+      type: failure.type,
+      description: failure.description,
+      failedChecks: failure.failedChecks,
+    })),
   }
 }
 
@@ -225,7 +265,11 @@ export async function summarizeStatusHistory(
   const retentionDays = getRetentionDays(env.RETENTION_DAYS)
   await mockPreviousDaysIfNeeded(env, db, parsed.configs, retentionDays, now)
 
-  return await summarizeHistoricalStatusResults(db, now)
+  return await summarizeHistoricalStatusResults(
+    db,
+    now,
+    getSlackStatusCheckCount(env.SLACK_STATUS_CHECK_COUNT),
+  )
 }
 
 async function mockPreviousDaysIfNeeded(
@@ -266,7 +310,11 @@ async function ensureHistoricalStatusCompaction(
   const mockedHistory = await mockPreviousDaysIfNeeded(env, db, configs, retentionDays, now)
 
   if (mockedHistory || (await hasUnsummarizedHistoricalStatusResults(db, now))) {
-    await summarizeHistoricalStatusResults(db, now)
+    await summarizeHistoricalStatusResults(
+      db,
+      now,
+      getSlackStatusCheckCount(env.SLACK_STATUS_CHECK_COUNT),
+    )
   }
 }
 
@@ -356,6 +404,20 @@ function rowToSlackStatusCheck(row: StatusResult): SlackStatusCheck {
   }
 }
 
+function leadingFailedChecks(checks: SlackStatusCheck[]): SlackStatusCheck[] {
+  const failedChecks: SlackStatusCheck[] = []
+
+  for (const check of checks) {
+    if (check.status) {
+      break
+    }
+
+    failedChecks.push(check)
+  }
+
+  return failedChecks
+}
+
 async function sendSlackStatusNotification(
   webhookUrl: string,
   failures: SlackStatusFailure[],
@@ -397,7 +459,7 @@ function buildSlackStatusMessage(
           ? `Description: ${escapeSlackText(failure.description)}`
           : undefined,
         `Config: ${escapeSlackText(formatConfigDetails(failure.config))}`,
-        `Failed checks: ${failure.failedChecks
+        `Consecutive failed checks: ${failure.failedChecks
           .map((check) => check.checkedAt.toISOString())
           .join(', ')}`,
       ]
@@ -408,7 +470,7 @@ function buildSlackStatusMessage(
 
   return [
     '*Status page alert*',
-    `Detected failed results in the last ${checkCount} check(s) per monitor.`,
+    `Detected ${checkCount} consecutive failed check(s) for one or more monitors.`,
     `Checked at: ${checkedAt.toISOString()}`,
     '',
     failureText,

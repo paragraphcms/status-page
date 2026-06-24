@@ -41,7 +41,24 @@ export type RunSummary = {
   checkedAt: Date
   status: boolean
   results: CheckOutcome[]
+  slack: RunSlackStatus
   configErrors: string[]
+}
+
+export type RunSlackStatus = {
+  checkCount: number
+  slackConfigured: boolean
+  notificationSent: boolean
+  notificationError?: string
+  failures: Array<{
+    name: string
+    type: StatusCheckConfig['type']
+    description?: string
+    failedChecks: Array<{
+      status: boolean
+      checkedAt: Date
+    }>
+  }>
 }
 
 export function buildStatusSnapshot(
