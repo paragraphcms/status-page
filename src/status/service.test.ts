@@ -49,7 +49,9 @@ test('configured checks notify Slack when the latest checks are consecutive fail
   expect(summary.slack.failures.map((failure) => failure.name)).toEqual(['API'])
   expect(summary.slack.failures[0]?.failedChecks).toHaveLength(3)
   expect(slackRequests).toHaveLength(1)
-  expect(slackRequests[0]).toContain('3 consecutive failed check(s)')
+  expect(expectSlackPayload(slackRequests[0])).toMatchObject({
+    text: expect.stringContaining('🚨 Service Health Alert'),
+  })
 })
 
 test('configured checks keep previous-day failures available for Slack threshold checks', async () => {
@@ -68,6 +70,59 @@ test('configured checks keep previous-day failures available for Slack threshold
   expect(summary.slack.notificationSent).toBe(true)
   expect(summary.slack.failures[0]?.failedChecks).toHaveLength(3)
   expect(slackRequests).toHaveLength(1)
+  expect(expectSlackPayload(slackRequests[0]).text).toContain(
+    'Failure history:\n• 2026-01-01 23:50 UTC\n• 2026-01-01 23:55 UTC\n• 2026-01-02 00:00 UTC',
+  )
+})
+
+test('Slack payload uses structured sections for HTTP failures', async () => {
+  const db = createTestDb()
+  const slackRequests: string[] = []
+  const env = createEnv(captureSlackFetch(slackRequests), [
+    {
+      name: 'Issuer Portal',
+      type: 'http',
+      url: 'https://credentials.codedevs.pro/credentials/678c5257-21f6-4e2a-baed-5b39b79a44cd?preview=1',
+      method: 'GET',
+      expectedStatus: [200],
+      timeoutMs: 50,
+      softFail: false,
+      softFailMilliseconds: 500,
+    },
+    {
+      name: 'App',
+      type: 'tcp',
+      host: '127.0.0.1',
+      port: 1,
+      timeoutMs: 50,
+    },
+  ])
+
+  await insertStatusResultRows(db, [
+    statusRow('Issuer Portal', false, 0),
+    statusRow('Issuer Portal', false, 1),
+    statusRow('Issuer Portal', false, 2),
+    statusRow('App', false, 0),
+    statusRow('App', false, 1),
+    statusRow('App', false, 2),
+  ])
+
+  const summary = await getSlackStatusSummary(env, db, dateAt(2))
+  const payload = expectSlackPayload(slackRequests[0])
+
+  expect(summary.notificationSent).toBe(true)
+  expect(slackRequests).toHaveLength(1)
+  expect(payload.text).toContain('🚨 Service Health Alert')
+  expect(payload.text).toContain('Status: DOWN')
+  expect(payload.text).toContain('Services: Issuer Portal, App')
+  expect(payload.text).toContain('Issuer Portal')
+  expect(payload.text).toContain('Check type:\nHTTP')
+  expect(payload.text).toContain(
+    'URL:\nhttps://credentials.codedevs.pro/credentials/678c5257-21f6-4e2a-baed-5b39b79a44cd?preview=1',
+  )
+  expect(payload.text).toContain('Expected:\nHTTP 200')
+  expect(payload.text).toContain('Failure history:\n• 00:00 UTC\n• 00:01 UTC\n• 00:02 UTC')
+  expect(payload.blocks.some((block) => block.type === 'header')).toBe(true)
 })
 
 function createTestDb(): StatusDb {
@@ -98,19 +153,22 @@ function createTestDb(): StatusDb {
   return drizzle(sqlite, { schema })
 }
 
-function createEnv(slackWebhookUrl: string): AppEnv {
+function createEnv(
+  slackWebhookUrl: string,
+  statusEndpointsJson: AppEnv['STATUS_ENDPOINTS_JSON'] = [
+    {
+      name: 'API',
+      type: 'tcp',
+      host: '127.0.0.1',
+      port: 1,
+      timeoutMs: 50,
+    },
+  ],
+): AppEnv {
   return {
     SLACK_WEBHOOK_URL: slackWebhookUrl,
     SLACK_STATUS_CHECK_COUNT: 3,
-    STATUS_ENDPOINTS_JSON: [
-      {
-        name: 'API',
-        type: 'tcp',
-        host: '127.0.0.1',
-        port: 1,
-        timeoutMs: 50,
-      },
-    ],
+    STATUS_ENDPOINTS_JSON: statusEndpointsJson,
   }
 }
 
@@ -155,4 +213,11 @@ function captureSlackFetch(requests: string[]): string {
   globalThis.fetch = slackFetch
 
   return slackWebhookUrl
+}
+
+function expectSlackPayload(raw: string | undefined): {
+  text: string
+  blocks: Array<{ type: string }>
+} {
+  return JSON.parse(raw ?? '{}')
 }

@@ -31,13 +31,12 @@ import {
 import { dayMs, startOfUtcDay } from './time'
 
 const mockCheckIntervalMs = 5 * 60 * 1000
+const slackAlertHeader = '🚨 Service Health Alert'
 
 type SlackStatusCheck = {
   status: boolean
   checkedAt: Date
 }
-
-type SlackStatusConfigDetails = Record<string, string | number | boolean | number[]>
 
 type SlackStatusMonitor = {
   name: string
@@ -54,6 +53,84 @@ type SlackStatusFailure = {
   description?: string
   config: SlackStatusConfigDetails
   failedChecks: SlackStatusCheck[]
+}
+
+type SlackStatusHttpConfigDetails = {
+  method: string
+  url: string
+  expectedStatus: number[]
+  timeoutMs: number
+  softFail?: boolean
+  softFailMilliseconds?: number
+  expectedBodyIncludes?: string
+  expectedBodyExcludes?: string
+  expectedJson?: boolean
+  headers?: string
+}
+
+type SlackStatusSslConfigDetails = {
+  host: string
+  port: number
+  warnBeforeDays: number
+  timeoutMs: number
+}
+
+type SlackStatusTcpConfigDetails = {
+  host: string
+  port: number
+  timeoutMs: number
+}
+
+type SlackStatusDnsConfigDetails = {
+  host: string
+  recordType: string
+  timeoutMs: number
+}
+
+type SlackStatusConfigDetails =
+  | SlackStatusHttpConfigDetails
+  | SlackStatusSslConfigDetails
+  | SlackStatusTcpConfigDetails
+  | SlackStatusDnsConfigDetails
+
+type SlackFailureSectionItem = {
+  label: string
+  lines: string[]
+}
+
+type SlackFailureSection = {
+  title: string
+  description?: string
+  items: SlackFailureSectionItem[]
+}
+
+type SlackPlainTextObject = {
+  type: 'plain_text'
+  text: string
+  emoji?: boolean
+}
+
+type SlackMrkdwnTextObject = {
+  type: 'mrkdwn'
+  text: string
+}
+
+type SlackWebhookBlock =
+  | {
+      type: 'header'
+      text: SlackPlainTextObject
+    }
+  | {
+      type: 'section'
+      text: SlackMrkdwnTextObject
+    }
+  | {
+      type: 'divider'
+    }
+
+type SlackWebhookPayload = {
+  text: string
+  blocks: SlackWebhookBlock[]
 }
 
 export type SlackStatusSummary = {
@@ -200,12 +277,7 @@ async function getSlackStatusSummaryForConfigs(
     if (!webhookUrl) {
       notificationError = 'Missing SLACK_WEBHOOK_URL.'
     } else {
-      const notification = await sendSlackStatusNotification(
-        webhookUrl,
-        failures,
-        now,
-        checkCount,
-      )
+      const notification = await sendSlackStatusNotification(webhookUrl, failures, checkCount)
       notificationSent = notification.sent
       notificationError = notification.error
     }
@@ -421,16 +493,14 @@ function leadingFailedChecks(checks: SlackStatusCheck[]): SlackStatusCheck[] {
 async function sendSlackStatusNotification(
   webhookUrl: string,
   failures: SlackStatusFailure[],
-  checkedAt: Date,
   checkCount: number,
 ): Promise<{ sent: boolean; error?: string }> {
   try {
+    const payload = buildSlackStatusPayload(failures, checkCount)
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        text: buildSlackStatusMessage(failures, checkedAt, checkCount),
-      }),
+      body: JSON.stringify(payload),
     })
 
     if (!response.ok) {
@@ -446,41 +516,157 @@ async function sendSlackStatusNotification(
   }
 }
 
-function buildSlackStatusMessage(
+function buildSlackStatusPayload(
   failures: SlackStatusFailure[],
-  checkedAt: Date,
   checkCount: number,
-): string {
-  const failureText = failures
-    .map((failure) =>
-      [
-        `*${escapeSlackText(failure.name)}* (${failure.type})`,
-        failure.description
-          ? `Description: ${escapeSlackText(failure.description)}`
-          : undefined,
-        `Config: ${escapeSlackText(formatConfigDetails(failure.config))}`,
-        `Consecutive failed checks: ${failure.failedChecks
-          .map((check) => check.checkedAt.toISOString())
-          .join(', ')}`,
-      ]
-        .filter((line): line is string => line !== undefined)
-        .join('\n'),
-    )
-    .join('\n\n')
+): SlackWebhookPayload {
+  const failureSections = failures.map((failure) => buildSlackFailureSection(failure, checkCount))
 
+  return {
+    text: buildSlackStatusText(failureSections),
+    blocks: [
+      {
+        type: 'header',
+        text: {
+          type: 'plain_text',
+          text: slackAlertHeader,
+          emoji: true,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: [`*Status:* DOWN`, `*Services:* ${joinFailureNames(failures)}`].join('\n'),
+        },
+      },
+      { type: 'divider' },
+      ...failureSections.flatMap((section, index) => [
+        {
+          type: 'section' as const,
+          text: {
+            type: 'mrkdwn' as const,
+            text: buildSlackSectionMarkdown(section),
+          },
+        },
+        ...(index === failureSections.length - 1 ? [] : ([{ type: 'divider' }] as const)),
+      ]),
+    ],
+  }
+}
+
+function buildSlackStatusText(sections: SlackFailureSection[]): string {
   return [
-    '*Status page alert*',
-    `Detected ${checkCount} consecutive failed check(s) for one or more monitors.`,
-    `Checked at: ${checkedAt.toISOString()}`,
+    slackAlertHeader,
     '',
-    failureText,
-  ].join('\n')
+    'Status: DOWN',
+    `Services: ${sections.map((section) => section.title).join(', ')}`,
+    '',
+    ...sections.flatMap((section, index) => [
+      section.title,
+      ...(section.description ? [section.description] : []),
+      '',
+      ...section.items.flatMap((item) => [`${item.label}:`, ...item.lines, '']),
+      ...(index === sections.length - 1 ? [] : ['']),
+    ]),
+  ]
+    .join('\n')
+    .trimEnd()
+}
+
+function buildSlackFailureSection(
+  failure: SlackStatusFailure,
+  checkCount: number,
+): SlackFailureSection {
+  const history = [...failure.failedChecks].reverse()
+  const detectedAt = history[0]?.checkedAt
+  const latestCheck = history.at(-1)?.checkedAt
+
+  return {
+    title: failure.name,
+    description: failure.description,
+    items: [
+      sectionItem('Check type', formatCheckType(failure.type)),
+      sectionItem('Issue', `${checkCount} consecutive health checks have failed.`),
+      ...configSectionItems(failure),
+      ...(detectedAt ? [sectionItem('Detected', formatSlackDateTime(detectedAt))] : []),
+      ...(latestCheck ? [sectionItem('Latest check', formatSlackDateTime(latestCheck))] : []),
+      sectionItem('Failure history', ...formatFailureHistory(history)),
+    ],
+  }
+}
+
+function sectionItem(label: string, ...lines: string[]): SlackFailureSectionItem {
+  return { label, lines }
+}
+
+function configSectionItems(failure: SlackStatusFailure): SlackFailureSectionItem[] {
+  switch (failure.type) {
+    case 'http':
+      return [
+        ...((failure.config as SlackStatusHttpConfigDetails).method.toUpperCase() === 'GET'
+          ? []
+          : [
+              sectionItem(
+                'Method',
+                (failure.config as SlackStatusHttpConfigDetails).method.toUpperCase(),
+              ),
+            ]),
+        sectionItem('URL', (failure.config as SlackStatusHttpConfigDetails).url),
+        sectionItem(
+          'Expected',
+          formatHttpExpectation(failure.config as SlackStatusHttpConfigDetails),
+        ),
+      ]
+    case 'ssl':
+      return [
+        sectionItem('Host', (failure.config as SlackStatusSslConfigDetails).host),
+        sectionItem('Port', String((failure.config as SlackStatusSslConfigDetails).port)),
+        sectionItem(
+          'Expected',
+          `Valid TLS certificate with at least ${(failure.config as SlackStatusSslConfigDetails).warnBeforeDays} day(s) remaining.`,
+        ),
+      ]
+    case 'tcp':
+      return [
+        sectionItem('Host', (failure.config as SlackStatusTcpConfigDetails).host),
+        sectionItem('Port', String((failure.config as SlackStatusTcpConfigDetails).port)),
+        sectionItem('Expected', 'TCP connection succeeds.'),
+      ]
+    case 'dns':
+      return [
+        sectionItem('Host', (failure.config as SlackStatusDnsConfigDetails).host),
+        sectionItem('Record type', (failure.config as SlackStatusDnsConfigDetails).recordType),
+        sectionItem(
+          'Expected',
+          `DNS ${(failure.config as SlackStatusDnsConfigDetails).recordType} record resolves.`,
+        ),
+      ]
+  }
+}
+
+function formatHttpExpectation(config: SlackStatusHttpConfigDetails): string {
+  const requirements = [`HTTP ${formatExpectedStatuses(config.expectedStatus)}`]
+
+  if (config.expectedBodyIncludes) {
+    requirements.push(`body includes "${config.expectedBodyIncludes}"`)
+  }
+
+  if (config.expectedBodyExcludes) {
+    requirements.push(`body excludes "${config.expectedBodyExcludes}"`)
+  }
+
+  if (config.expectedJson !== undefined) {
+    requirements.push('JSON body matches the configured expectation')
+  }
+
+  return requirements.join('; ')
 }
 
 function configDetails(config: StatusCheckConfig): SlackStatusConfigDetails {
   switch (config.type) {
     case 'http': {
-      const details: SlackStatusConfigDetails = {
+      const details: SlackStatusHttpConfigDetails = {
         method: config.method,
         url: config.url,
         expectedStatus: config.expectedStatus,
@@ -498,6 +684,10 @@ function configDetails(config: StatusCheckConfig): SlackStatusConfigDetails {
 
       if (config.expectedBodyExcludes) {
         details.expectedBodyExcludes = config.expectedBodyExcludes
+      }
+
+      if (config.expectedJson !== undefined) {
+        details.expectedJson = true
       }
 
       if (config.headers && Object.keys(config.headers).length > 0) {
@@ -528,17 +718,75 @@ function configDetails(config: StatusCheckConfig): SlackStatusConfigDetails {
   }
 }
 
-function formatConfigDetails(details: SlackStatusConfigDetails): string {
-  return Object.entries(details)
-    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(',') : String(value)}`)
-    .join(', ')
-}
-
 function formatRedactedHeaders(headers: Record<string, string>): string {
   return Object.keys(headers)
     .sort((left, right) => left.localeCompare(right))
     .map((name) => `${name}: [redacted]`)
     .join(', ')
+}
+
+function formatExpectedStatuses(statuses: number[]): string {
+  if (statuses.length === 0) {
+    return 'response'
+  }
+
+  if (statuses.length === 1) {
+    return String(statuses[0])
+  }
+
+  if (statuses.length === 2) {
+    return `${statuses[0]} or ${statuses[1]}`
+  }
+
+  return `one of ${statuses.join(', ')}`
+}
+
+function formatFailureHistory(checks: SlackStatusCheck[]): string[] {
+  const dayKeys = new Set(checks.map((check) => utcDayKey(check.checkedAt)))
+  const includeDate = dayKeys.size > 1
+
+  return checks.map((check) =>
+    `• ${includeDate ? formatSlackDateTime(check.checkedAt) : formatSlackTime(check.checkedAt)}`,
+  )
+}
+
+function buildSlackSectionMarkdown(section: SlackFailureSection): string {
+  return [
+    `*${escapeSlackText(section.title)}*`,
+    ...(section.description ? [`_${escapeSlackText(section.description)}_`] : []),
+    '',
+    ...section.items.flatMap((item) => [
+      `*${item.label}*`,
+      ...item.lines.map((line) => escapeSlackText(line)),
+      '',
+    ]),
+  ]
+    .join('\n')
+    .trimEnd()
+}
+
+function joinFailureNames(failures: SlackStatusFailure[]): string {
+  return failures.map((failure) => escapeSlackText(failure.name)).join(', ')
+}
+
+function formatCheckType(type: StatusCheckConfig['type']): string {
+  return type.toUpperCase()
+}
+
+function formatSlackDateTime(date: Date): string {
+  return `${utcDayKey(date)} ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())} UTC`
+}
+
+function formatSlackTime(date: Date): string {
+  return `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())} UTC`
+}
+
+function utcDayKey(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0')
 }
 
 function escapeSlackText(value: string): string {
