@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-global-schema.json",
+  "platform": "github",
+  "onboarding": false,
+  "requireConfig": "optional",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":separateMajorReleases"
+  ],
+  "timezone": "Europe/Warsaw",
+  "labels": ["dependencies"],
+  "schedule": ["before 8am on monday", "before 8am on thursday"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 8am on monday"],
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "description": "Automerge safe patch, pin, and digest updates when CI passes",
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Group non-major development dependency updates",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "dev dependencies"
+    },
+    {
+      "description": "Keep major updates visible and manual",
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "major"]
+    }
+  ]
+}
